@@ -3,8 +3,11 @@ package com.gov.landportal;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.util.*;
 import java.util.List;
-import java.util.ArrayList;
+
+import com.google.api.core.ApiFuture;
+import com.google.cloud.firestore.*;
 
 public class LandPlotMap extends JPanel {
 
@@ -12,7 +15,7 @@ public class LandPlotMap extends JPanel {
         Polygon polygon;
         String id;
         String owner;
-        boolean isSellable; // true or false
+        boolean isSellable;
 
         public Plot(String id, int[] xPoints, int[] yPoints, String owner, boolean isSellable) {
             this.id = id;
@@ -29,31 +32,17 @@ public class LandPlotMap extends JPanel {
             Rectangle bounds = polygon.getBounds();
             return new Point(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
         }
-
-        public String getOwner() {
-            return owner;
-        }
-
-        public boolean isSellable() {
-            return isSellable;
-        }
     }
 
-    // PlotDetailsPanel to display plot information in the side panel
     static class PlotDetailsPanel extends JPanel {
-        private JLabel plotIdLabel;
-        private JLabel ownerLabel;
-        private JLabel sellableLabel;
+        private JLabel plotIdLabel = new JLabel("Plot ID: ");
+        private JLabel ownerLabel = new JLabel("Owner: ");
+        private JLabel sellableLabel = new JLabel("Sellable: ");
 
         public PlotDetailsPanel() {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
             setBackground(Color.LIGHT_GRAY);
-            setPreferredSize(new Dimension(250, getHeight()));
-
-            plotIdLabel = new JLabel("Plot ID: ");
-            ownerLabel = new JLabel("Owner: ");
-            sellableLabel = new JLabel("Sellable: ");
-
+            setPreferredSize(new Dimension(250, 0));
             add(plotIdLabel);
             add(ownerLabel);
             add(sellableLabel);
@@ -69,18 +58,13 @@ public class LandPlotMap extends JPanel {
     private List<Plot> plots = new ArrayList<>();
     private Plot hoveredPlot = null;
     private Plot selectedPlot = null;
-    @SuppressWarnings("unused")
     private PlotDetailsPanel detailsPanel;
 
     public LandPlotMap(PlotDetailsPanel detailsPanel) {
         this.detailsPanel = detailsPanel;
 
         FirebaseInitializer.init();
-
-        // Sample plots — replace with DB-loaded data
-        plots.add(new Plot("725", new int[]{300, 400, 420, 340}, new int[]{100, 100, 200, 200}, "John Doe", true));
-        plots.add(new Plot("724", new int[]{400, 500, 520, 420}, new int[]{100, 100, 200, 200}, "Jane Smith", false));
-        plots.add(new Plot("745", new int[]{340, 420, 440, 360}, new int[]{200, 200, 300, 300}, "Robert Brown", true));
+        loadPlotsFromFirebase();
 
         addMouseMotionListener(new MouseMotionAdapter() {
             public void mouseMoved(MouseEvent e) {
@@ -100,14 +84,43 @@ public class LandPlotMap extends JPanel {
                 for (Plot plot : plots) {
                     if (plot.contains(e.getPoint())) {
                         selectedPlot = plot;
-                        // Update the side panel with plot details
-                        detailsPanel.updatePlotDetails(plot.id, plot.getOwner(), plot.isSellable());
+                        detailsPanel.updatePlotDetails(plot.id, plot.owner, plot.isSellable);
                         break;
                     }
                 }
                 repaint();
             }
         });
+    }
+
+    private void loadPlotsFromFirebase() {
+        Firestore db = FirebaseInitializer.getDB();
+        ApiFuture<QuerySnapshot> future = db.collection("plots").get();
+
+        try {
+            List<QueryDocumentSnapshot> docs = future.get().getDocuments();
+            for (QueryDocumentSnapshot doc : docs) {
+                String id = doc.getString("id");
+                String owner = doc.getString("owner");
+                boolean isSellable = Boolean.TRUE.equals(doc.getBoolean("isSellable"));
+
+                int[] xPoints = toIntArray(doc.getString("xPoints"));
+                int[] yPoints = toIntArray(doc.getString("yPoints"));
+
+                plots.add(new Plot(id, xPoints, yPoints, owner, isSellable));
+            }
+            repaint();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private int[] toIntArray(String csv) {
+        if (csv == null || csv.isEmpty()) return new int[0];
+        String cleaned = csv.replaceAll("[\\[\\]\\s]", ""); // remove brackets and whitespace
+        return Arrays.stream(cleaned.split(","))
+                .mapToInt(Integer::parseInt)
+                .toArray();
     }
 
     @Override
@@ -119,38 +132,32 @@ public class LandPlotMap extends JPanel {
 
         for (Plot plot : plots) {
             if (plot == selectedPlot) {
-                g2.setColor(new Color(100, 149, 237)); // Light Blue for selected
+                g2.setColor(new Color(100, 149, 237));
             } else if (plot == hoveredPlot) {
-                g2.setColor(new Color(255, 215, 0)); // Yellow for hovered
+                g2.setColor(new Color(255, 215, 0));
             } else {
-                g2.setColor(new Color(255, 229, 180)); // Light Beige for normal
+                g2.setColor(new Color(255, 229, 180));
             }
 
             g2.fillPolygon(plot.polygon);
             g2.setColor(Color.BLACK);
             g2.drawPolygon(plot.polygon);
 
-            // Draw plot number
-            FontMetrics fm = g2.getFontMetrics();
+            // Ensure that plot.id is not null before using it
+            String plotId = plot.id != null ? plot.id : "";
             Point center = plot.getCenter();
-            int textWidth = fm.stringWidth(plot.id);
-            g2.drawString(plot.id, center.x - textWidth / 2, center.y);
+            g2.drawString(plotId, center.x - g2.getFontMetrics().stringWidth(plotId) / 2, center.y);
         }
     }
 
-    public static void main(String[] args) {
-        // Create the plot details panel (side panel)
-        PlotDetailsPanel detailsPanel = new PlotDetailsPanel();
 
-        // Create the main frame
+    public static void main(String[] args) {
+        PlotDetailsPanel detailsPanel = new PlotDetailsPanel();
         JFrame frame = new JFrame("Land Plot Map");
         frame.setLayout(new BorderLayout());
 
-        // Create the main map panel
         LandPlotMap panel = new LandPlotMap(detailsPanel);
         frame.add(panel, BorderLayout.CENTER);
-
-        // Add the plot details side panel
         frame.add(detailsPanel, BorderLayout.EAST);
 
         frame.setSize(1000, 600);
