@@ -63,7 +63,7 @@ public class Home extends JPanel {
     // Method to center the login card
     private void centerLoginCard() {
         int loginCardWidth = 400;  // Width of the login card
-        int loginCardHeight = 420;  // Height of the login card
+        int loginCardHeight = 550;  // Height of the login card
 
         // Center the login card based on the panel's width and height
         int x = (getWidth() - loginCardWidth) / 2;
@@ -76,7 +76,7 @@ public class Home extends JPanel {
         if (mediaPlayer.status().isPlaying()) {
             mediaPlayer.controls().stop();
         }
-        mediaPlayer.media().play("video/video 1.mp4"); // Replace with your actual video path
+        mediaPlayer.media().play("assets/video 1.mp4"); // Replace with your actual video path
     }
 
     public void stop() {

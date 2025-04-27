@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Land Plot Map System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/openlayers/4.6.5/ol.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #map {
+            flex: 1;
+            background-color: #f0f0f0;
+        }
+
+        #sidebar {
+            width: 300px;
+            background-color: #f8f8f8;
+            border-left: 1px solid #ddd;
+            padding: 20px;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+        }
+
+        #sidebar.collapsed {
+            transform: translateX(300px);
+        }
+
+        #toggle-sidebar {
+            position: absolute;
+            top: 10px;
+            right: 310px;
+            z-index: 1000;
+            padding: 8px 12px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #toggle-sidebar.collapsed {
+            right: 10px;
+        }
+
+        .header {
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+        }
+
+        .header h2 {
+            color: #333;
+            font-size: 20px;
+        }
+
+        .plot-info {
+            margin-bottom: 15px;
+        }
+
+        .plot-info h3 {
+            color: #444;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .info-item {
+            display: flex;
+            margin-bottom: 8px;
+        }
+
+        .info-label {
+            font-weight: bold;
+            width: 120px;
+            color: #555;
+        }
+
+        .info-value {
+            flex: 1;
+        }
+
+        .no-plot-selected {
+            color: #888;
+            font-style: italic;
+        }
+
+        .plot-highlight {
+            fill: rgba(255, 215, 0, 0.5);
+            stroke: #ff8c00;
+            stroke-width: 2;
+        }
+
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .search-container {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        #search-input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .map-controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .map-control-btn {
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+        }
+
+        .map-control-btn:hover {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<button id="toggle-sidebar">›</button>
+
+<div id="sidebar">
+    <div class="header">
+        <h2>Land Plot Information</h2>
+    </div>
+
+    <div class="search-container">
+        <input type="text" id="search-input" placeholder="Search by plot number...">
+    </div>
+
+    <div id="plot-info-container">
+        <div class="no-plot-selected">
+            Click on a plot to view its details
+        </div>
+    </div>
+</div>
+
+<div class="map-controls">
+    <button class="map-control-btn" id="zoom-in">+</button>
+    <button class="map-control-btn" id="zoom-out">−</button>
+    <button class="map-control-btn" id="reset-view">⟲</button>
+</div>
+
+<!-- Load Firebase -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.6.10/firebase-app-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.6.10/firebase-firestore-compat.js"></script>
+
+<!-- Load OpenLayers -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openlayers/4.6.5/ol.js"></script>
+
+<script>
+    // Initialize Firebase
+    const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_AUTH_DOMAIN",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_STORAGE_BUCKET",
+        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+        appId: "YOUR_APP_ID"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // Sample plot data - this would normally come from a GeoJSON file or server
+    const plotsData = {
+        "type": "FeatureCollection",
+        "features": [
+            // Add features here - a few examples:
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [0, 0], [0, 100], [100, 100], [100, 0], [0, 0]
+                    ]]
+                },
+                "properties": {"id": "1", "plotNumber": "1"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [100, 0], [100, 100], [200, 100], [200, 0], [100, 0]
+                    ]]
+                },
+                "properties": {"id": "2", "plotNumber": "2"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [0, 100], [0, 200], [100, 200], [100, 100], [0, 100]
+                    ]]
+                },
+                "properties": {"id": "3", "plotNumber": "3"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [100, 100], [100, 200], [200, 200], [200, 100], [100, 100]
+                    ]]
+                },
+                "properties": {"id": "4", "plotNumber": "4"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [0, 200], [0, 300], [100, 300], [100, 200], [0, 200]
+                    ]]
+                },
+                "properties": {"id": "5", "plotNumber": "5"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [0, 300], [0, 400], [150, 400], [150, 300], [0, 300]
+                    ]]
+                },
+                "properties": {"id": "6", "plotNumber": "6"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [150, 300], [150, 400], [300, 400], [300, 300], [150, 300]
+                    ]]
+                },
+                "properties": {"id": "7", "plotNumber": "7"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [200, 0], [200, 100], [300, 100], [300, 0], [200, 0]
+                    ]]
+                },
+                "properties": {"id": "8", "plotNumber": "8"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [200, 100], [200, 200], [300, 200], [300, 100], [200, 100]
+                    ]]
+                },
+                "properties": {"id": "9", "plotNumber": "9"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [300, 0], [300, 100], [400, 100], [400, 0], [300, 0]
+                    ]]
+                },
+                "properties": {"id": "15", "plotNumber": "15"}
+            },
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [300, 100], [300, 200], [400, 200], [400, 100], [300, 100]
+                    ]]
+                },
+                "properties": {"id": "14", "plotNumber": "14"}
+            }
+            // Add more plots as needed for the district
+        ]
+    };
+
+    // Sample Firebase database entries for the plots
+    const samplePlotInfo = {
+        "1": {
+            "owner": "Rajesh Kumar",
+            "area": "2.5 acres",
+            "landUse": "Agricultural",
+            "registrationDate": "12-05-2010",
+            "khataNumber": "123",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Paid"
+        },
+        "2": {
+            "owner": "Sunita Sharma",
+            "area": "1.8 acres",
+            "landUse": "Agricultural",
+            "registrationDate": "23-07-2012",
+            "khataNumber": "124",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Paid"
+        },
+        "3": {
+            "owner": "Amit Singh",
+            "area": "3.2 acres",
+            "landUse": "Agricultural",
+            "registrationDate": "05-11-2008",
+            "khataNumber": "125",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Pending"
+        },
+        "4": {
+            "owner": "Priya Patel",
+            "area": "2.1 acres",
+            "landUse": "Residential",
+            "registrationDate": "18-03-2015",
+            "khataNumber": "126",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Paid"
+        },
+        "5": {
+            "owner": "Government of Haryana",
+            "area": "5.4 acres",
+            "landUse": "Public",
+            "registrationDate": "01-01-2000",
+            "khataNumber": "127",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Exempt"
+        },
+        "6": {
+            "owner": "Haryana Urban Development Authority",
+            "area": "7.8 acres",
+            "landUse": "Commercial",
+            "registrationDate": "14-08-2005",
+            "khataNumber": "128",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Exempt"
+        },
+        "7": {
+            "owner": "Ravi Malhotra",
+            "area": "1.6 acres",
+            "landUse": "Agricultural",
+            "registrationDate": "29-09-2011",
+            "khataNumber": "129",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Paid"
+        },
+        "8": {
+            "owner": "Meena Gupta",
+            "area": "2.3 acres",
+            "landUse": "Agricultural",
+            "registrationDate": "07-12-2013",
+            "khataNumber": "130",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Paid"
+        },
+        "9": {
+            "owner": "Vikram Reddy",
+            "area": "3.0 acres",
+            "landUse": "Residential",
+            "registrationDate": "22-06-2017",
+            "khataNumber": "131",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Paid"
+        },
+        "15": {
+            "owner": "Ananya Kapoor",
+            "area": "1.9 acres",
+            "landUse": "Agricultural",
+            "registrationDate": "16-02-2009",
+            "khataNumber": "135",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Pending"
+        },
+        "14": {
+            "owner": "Dev Contractors Pvt Ltd",
+            "area": "4.2 acres",
+            "landUse": "Commercial",
+            "registrationDate": "09-10-2014",
+            "khataNumber": "134",
+            "district": "Gurgaon",
+            "state": "Haryana",
+            "taxStatus": "Paid"
+        }
+    };
+
+    // In a real application, you would upload this data to Firebase
+    // Here we're simulating that the data is already in Firebase
+
+    // Initialize OpenLayers map
+    document.addEventListener('DOMContentLoaded', function() {
+        // Define a custom projection for the arbitrary coordinate system
+        const extent = [0, 0, 400, 400];
+        const projection = new ol.proj.Projection({
+            code: 'EPSG:99999',
+            units: 'pixels',
+            extent: extent
+        });
+
+        // Convert plot data to OpenLayers features
+        const vectorSource = new ol.source.Vector({
+            features: new ol.format.GeoJSON().readFeatures(plotsData, {
+                dataProjection: 'EPSG:99999',
+                featureProjection: 'EPSG:99999'
+            })
+        });
+
+        // Style for normal plots
+        const normalStyle = new ol.style.Style({
+            fill: new ol.style.Fill({
+                color: 'rgba(255, 235, 190, 0.6)'
+            }),
+            stroke: new ol.style.Stroke({
+                color: '#8B4513',
+                width: 1
+            }),
+            text: new ol.style.Text({
+                font: '12px Arial',
+                fill: new ol.style.Fill({
+                    color: '#000'
+                }),
+                stroke: new ol.style.Stroke({
+                    color: '#fff',
+                    width: 3
+                })
+            })
+        });
+
+        // Style for selected plots
+        const selectedStyle = new ol.style.Style({
+            fill: new ol.style.Fill({
+                color: 'rgba(255, 215, 0, 0.4)'
+            }),
+            stroke: new ol.style.Stroke({
+                color: '#FF8C00',
+                width: 2
+            }),
+            text: new ol.style.Text({
+                font: 'bold 12px Arial',
+                fill: new ol.style.Fill({
+                    color: '#000'
+                }),
+                stroke: new ol.style.Stroke({
+                    color: '#fff',
+                    width: 3
+                })
+            })
+        });
+
+        // Function to style features
+        function styleFunction(feature) {
+            const style = feature.get('selected') ? selectedStyle : normalStyle;
+            style.getText().setText(feature.get('plotNumber'));
+            return style;
+        }
+
+        // Create the vector layer
+        const vectorLayer = new ol.layer.Vector({
+            source: vectorSource,
+            style: styleFunction
+        });
+
+        // Create a tile grid for the debug background
+        const tileGrid = new ol.tilegrid.TileGrid({
+            extent: extent,
+            resolutions: [4, 2, 1, 0.5, 0.25, 0.125],
+            tileSize: 256
+        });
+
+        // Create the map
+        const map = new ol.Map({
+            target: 'map',
+            layers: [
+                // Debug tile layer instead of OSM
+                new ol.layer.Tile({
+                    source: new ol.source.TileDebug({
+                        projection: projection,
+                        tileGrid: tileGrid,
+                        wrapX: false
+                    })
+                }),
+                vectorLayer
+            ],
+            view: new ol.View({
+                projection: projection,
+                center: [200, 200], // Center of our coordinate extent
+                zoom: 2,
+                maxZoom: 8
+            })
+        });
+
+        // Fit view to features
+        map.getView().fit(vectorSource.getExtent(), {
+            padding: [50, 50, 50, 50],
+            maxZoom: 4
+        });
+
+        // Handle map click events
+        map.on('click', function(evt) {
+            // Reset all features to normal style
+            vectorSource.getFeatures().forEach(function(feature) {
+                feature.set('selected', false);
+            });
+
+            // Check if a feature was clicked
+            const feature = map.forEachFeatureAtPixel(evt.pixel, function(feature) {
+                return feature;
+            });
+
+            if (feature && feature.get('properties')) {
+                // Highlight the clicked feature
+                feature.set('selected', true);
+
+                // Get plot ID
+                const plotId = feature.get('properties').id;
+
+                // Update sidebar with plot information
+                updateSidebar(plotId);
+            } else {
+                // No feature clicked, show default message
+                document.getElementById('plot-info-container').innerHTML = `
+                        <div class="no-plot-selected">
+                            Click on a plot to view its details
+                        </div>
+                    `;
+            }
+
+            // Refresh vector layer to update styles
+            vectorLayer.changed();
+        });
+
+        // Toggle sidebar
+        const toggleBtn = document.getElementById('toggle-sidebar');
+        const sidebar = document.getElementById('sidebar');
+
+        toggleBtn.addEventListener('click', function() {
+            sidebar.classList.toggle('collapsed');
+            toggleBtn.classList.toggle('collapsed');
+            toggleBtn.textContent = sidebar.classList.contains('collapsed') ? '‹' : '›';
+        });
+
+        // Map controls
+        document.getElementById('zoom-in').addEventListener('click', function() {
+            const view = map.getView();
+            const zoom = view.getZoom();
+            view.setZoom(zoom + 1);
+        });
+
+        document.getElementById('zoom-out').addEventListener('click', function() {
+            const view = map.getView();
+            const zoom = view.getZoom();
+            view.setZoom(zoom - 1);
+        });
+
+        document.getElementById('reset-view').addEventListener('click', function() {
+            map.getView().fit(vectorSource.getExtent(), {
+                padding: [50, 50, 50, 50],
+                maxZoom: 4
+            });
+        });
+
+        // Search functionality
+        const searchInput = document.getElementById('search-input');
+
+        searchInput.addEventListener('keyup', function(e) {
+            if (e.key === 'Enter') {
+                const searchTerm = searchInput.value.trim();
+
+                if (searchTerm === '') return;
+
+                // Find feature with matching plot number
+                const features = vectorSource.getFeatures();
+                let found = false;
+
+                for (let i = 0; i < features.length; i++) {
+                    const plotNumber = features[i].get('properties').plotNumber;
+
+                    if (plotNumber === searchTerm) {
+                        // Reset all features
+                        features.forEach(function(feature) {
+                            feature.set('selected', false);
+                        });
+
+                        // Select the found feature
+                        features[i].set('selected', true);
+
+                        // Update the sidebar
+                        updateSidebar(features[i].get('properties').id);
+
+                        // Center the map on the feature
+                        const extent = features[i].getGeometry().getExtent();
+                        map.getView().fit(extent, {
+                            padding: [100, 100, 100, 100],
+                            maxZoom: 4
+                        });
+
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    alert('Plot number not found!');
+                }
+
+                // Refresh vector layer
+                vectorLayer.changed();
+            }
+        });
+
+        // For the demo, we're using the sample data instead of actually fetching from Firebase
+        function updateSidebar(plotId) {
+            // Show loading indicator
+            document.getElementById('plot-info-container').innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                    </div>
+                `;
+
+            // In a real application, we would fetch from Firebase like this:
+            // db.collection('plots').doc(plotId).get()
+            //     .then((doc) => {
+            //         if (doc.exists) {
+            //             const data = doc.data();
+            //             // Update sidebar with data
+            //         } else {
+            //             // No data found
+            //         }
+            //     })
+            //     .catch((error) => {
+            //         console.error("Error fetching plot data:", error);
+            //     });
+
+            // For the demo, we'll simulate a fetch delay and use our sample data
+            setTimeout(() => {
+                const plotData = samplePlotInfo[plotId];
+
+                if (plotData) {
+                    let html = `
+                            <div class="plot-info">
+                                <h3>Plot #${plotId}</h3>
+                                <div class="info-item">
+                                    <div class="info-label">Owner:</div>
+                                    <div class="info-value">${plotData.owner}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Area:</div>
+                                    <div class="info-value">${plotData.area}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Land Use:</div>
+                                    <div class="info-value">${plotData.landUse}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Registration Date:</div>
+                                    <div class="info-value">${plotData.registrationDate}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Khata Number:</div>
+                                    <div class="info-value">${plotData.khataNumber}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">District:</div>
+                                    <div class="info-value">${plotData.district}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">State:</div>
+                                    <div class="info-value">${plotData.state}</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Tax Status:</div>
+                                    <div class="info-value">${plotData.taxStatus}</div>
+                                </div>
+                            </div>
+                        `;
+
+                    document.getElementById('plot-info-container').innerHTML = html;
+                } else {
+                    document.getElementById('plot-info-container').innerHTML = `
+                            <div class="no-plot-selected">
+                                No data available for this plot
+                            </div>
+                        `;
+                }
+            }, 500); // Simulate network delay
+        }
+    });
+</script>
+</body>
+</html>
