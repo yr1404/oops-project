@@ -1,11 +1,8 @@
 package login.user;
 
+import com.google.cloud.firestore.*;
 import com.gov.landportal.FirebaseInitializer;
 import com.google.api.core.ApiFuture;
-import com.google.cloud.firestore.DocumentSnapshot;
-import com.google.cloud.firestore.Firestore;
-import com.google.cloud.firestore.QueryDocumentSnapshot;
-import com.google.cloud.firestore.QuerySnapshot;
 import login.forms.LoginCard;
 
 import javax.swing.*;
@@ -13,7 +10,9 @@ import javax.swing.border.*;
 import javax.swing.table.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class UserDashboard extends JFrame {
 
@@ -22,6 +21,7 @@ public class UserDashboard extends JFrame {
     private JButton logoutButton;
     private JLabel loadingLabel;
     private String userUid;
+    private String userName;
     private JTable applicationsTable;
 
     // Government color scheme
@@ -160,10 +160,11 @@ public class UserDashboard extends JFrame {
         sectionHeader.add(appLabel, BorderLayout.WEST);
 
         // Create a styled table
-        applicationsTable = new JTable(new Object[][]{}, new String[]{"Request ID", "Request Title", "Status", "Submission Date"}) {
+        applicationsTable = new JTable(new Object[][]{}, new String[]{"Request ID", "Request Title", "Status", "Submission Date", "Actions"}) {
             @Override
             public boolean isCellEditable(int row, int column) {
-                return false;
+                // Make all cells except for the last column (Actions) non-editable
+                return column == 4;  // Only the delete button column is editable
             }
         };
 
@@ -183,6 +184,10 @@ public class UserDashboard extends JFrame {
         // Status cell renderer for color-coding
         applicationsTable.getColumnModel().getColumn(2).setCellRenderer(new StatusCellRenderer());
 
+        // Add the delete button to the last column
+        applicationsTable.getColumnModel().getColumn(4).setCellRenderer(new ButtonRenderer());
+        applicationsTable.getColumnModel().getColumn(4).setCellEditor(new ButtonEditor(new JCheckBox()));
+
         JScrollPane tableScrollPane = new JScrollPane(applicationsTable);
         tableScrollPane.setBorder(BorderFactory.createLineBorder(PRIMARY_DARK));
 
@@ -191,6 +196,116 @@ public class UserDashboard extends JFrame {
 
         contentPanel.add(applicationPanel, BorderLayout.CENTER);
     }
+
+    // ButtonRenderer for the delete button in the "Action" column
+    // Custom Button Renderer
+    class ButtonRenderer extends JButton implements TableCellRenderer {
+        public ButtonRenderer() {
+            setText("Delete");
+            setBackground(Color.RED);
+            setForeground(Color.WHITE);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+            return this;
+        }
+    }
+
+    // Custom Button Editor
+    class ButtonEditor extends DefaultCellEditor {
+        protected JButton button;
+        private String label;
+        private boolean isPushed;
+        private int row;
+
+        public ButtonEditor(JCheckBox checkBox) {
+            super(checkBox);
+            button = new JButton();
+            button.setOpaque(true);
+            button.addActionListener(new ActionListener() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    fireEditingStopped();
+                    if (isPushed) {
+                        // Call the delete method
+                        deleteApplication(applicationsTable.getValueAt(row, 0).toString()); // Delete based on Request ID (first column)
+                    }
+                }
+            });
+        }
+
+        @Override
+        public Component getTableCellEditorComponent(JTable table, Object value, boolean isSelected, int row, int column) {
+            this.row = row;
+            if (isSelected) {
+                button.setForeground(table.getSelectionForeground());
+                button.setBackground(table.getSelectionBackground());
+            } else {
+                button.setForeground(table.getForeground());
+                button.setBackground(table.getBackground());
+            }
+            label = (value == null) ? "" : value.toString();
+            button.setText(label);
+            isPushed = true;
+            return button;
+        }
+
+        @Override
+        public Object getCellEditorValue() {
+            isPushed = false;
+            return label;
+        }
+
+        @Override
+        public boolean stopCellEditing() {
+            isPushed = false;
+            return super.stopCellEditing();
+        }
+
+        @Override
+        protected void fireEditingStopped() {
+            super.fireEditingStopped();
+        }
+    }
+
+    // Implement your deleteApplication method to handle the deletion of an application
+    private void deleteApplication(String requestId) {
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Are you sure you want to delete this application?",
+                "Delete Application",
+                JOptionPane.YES_NO_OPTION
+        );
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            Firestore db = FirebaseInitializer.getDB();
+
+            // Delete the document
+            ApiFuture<WriteResult> future = db.collection("applications")
+                    .document(requestId)
+                    .delete();
+
+            try {
+                // Block and wait for the operation to finish
+                WriteResult result = future.get();  // Get the WriteResult (indicates success)
+                JOptionPane.showMessageDialog(this, "Application deleted successfully.");
+                // Reload applications after deletion
+                fetchUserApplications(userUid);
+            } catch (Exception e) {
+                JOptionPane.showMessageDialog(this, "Failed to delete application. Try again.");
+                e.printStackTrace();
+            }
+        }
+    }
+
+
+    private void refreshApplications() {
+        // Fetch the applications again and update the table after deletion
+        String uid = "user-uid";  // Replace with actual user UID
+        fetchUserApplications(uid);
+    }
+
 
     private void createActionsPanel(JPanel contentPanel) {
         JPanel actionsPanelWrapper = new JPanel(new BorderLayout());
@@ -343,7 +458,7 @@ public class UserDashboard extends JFrame {
         }
 
         if (yourPlotsBtn != null) {
-            yourPlotsBtn.addActionListener(e -> new YourPlotsPage());
+            yourPlotsBtn.addActionListener(e -> new YourPlotsPage(userUid));
         }
 
         if (createAppBtn != null) {
@@ -467,10 +582,19 @@ public class UserDashboard extends JFrame {
                         String requestId = document.getId().substring(0, 8).toUpperCase(); // First 8 chars of document ID
                         String requestTitle = document.getString("title");
                         String status = document.getString("status");
-                        // If there's a timestamp field, use it, otherwise use a placeholder
-                        String date = document.contains("timestamp") ?
-                                document.getTimestamp("timestamp").toDate().toString().substring(0, 10) :
-                                "N/A";
+
+                        // Handle both Long and Timestamp types for the timestamp field
+                        String date = "N/A"; // Default value in case timestamp is not present
+                        if (document.contains("timestamp")) {
+                            Object timestamp = document.get("timestamp");
+                            if (timestamp instanceof Long) {
+                                // If timestamp is stored as Long (milliseconds)
+                                date = new java.util.Date((Long) timestamp).toString().substring(0, 10);
+                            } else if (timestamp instanceof com.google.cloud.Timestamp) {
+                                // If timestamp is stored as com.google.cloud.Timestamp
+                                date = new java.util.Date(((com.google.cloud.Timestamp) timestamp).toDate().getTime()).toString().substring(0, 10);
+                            }
+                        }
 
                         data[i][0] = requestId;
                         data[i][1] = requestTitle;
@@ -509,6 +633,7 @@ public class UserDashboard extends JFrame {
                     repaint();
                 }
             }
+
         };
         worker.execute();
     }
@@ -531,13 +656,11 @@ public class UserDashboard extends JFrame {
     }
 
     private void openCreateApplicationDialog() {
-        // Create a styled dialog for new applications
         JDialog dialog = new JDialog(this, "Create New Application", true);
         dialog.setSize(500, 400);
         dialog.setLocationRelativeTo(this);
         dialog.setLayout(new BorderLayout());
 
-        // Dialog header
         JPanel headerPanel = new JPanel(new BorderLayout());
         headerPanel.setBackground(PRIMARY_DARK);
         headerPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
@@ -547,7 +670,6 @@ public class UserDashboard extends JFrame {
         headerLabel.setForeground(Color.WHITE);
         headerPanel.add(headerLabel, BorderLayout.CENTER);
 
-        // Form panel
         JPanel formPanel = new JPanel(new GridBagLayout());
         formPanel.setBackground(Color.WHITE);
         formPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
@@ -556,20 +678,50 @@ public class UserDashboard extends JFrame {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(5, 5, 5, 5);
 
-        // Request Title
-        JLabel titleLabel = new JLabel("Request Title:");
-        titleLabel.setFont(NORMAL_FONT);
-        JTextField requestField = new JTextField(20);
-        requestField.setFont(NORMAL_FONT);
+        // Store plotNo <-> display text mapping (using plotNo as plotId)
+        Map<String, String> plotMap = new LinkedHashMap<>();
+        JComboBox<String> plotComboBox = new JComboBox<>();
+        plotComboBox.setFont(NORMAL_FONT);
+
+        try {
+            // You need to implement getUserPlotsMap to return Map<plotNo, displayText>
+            plotMap = FirebaseInitializer.getUserPlotsMap(userUid);
+
+            for (Map.Entry<String, String> entry : plotMap.entrySet()) {
+                String plotNo = entry.getKey(); // The plot number is the key
+                String displayText = entry.getValue(); // The display text might be the full address or location
+
+                // If display text contains extra information, display only plotNo
+                plotComboBox.addItem(plotNo); // Show only plot number (key)
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            plotComboBox.addItem("No plots available");
+        }
+
+        JLabel plotLabel = new JLabel("Select Plot:");
+        plotLabel.setFont(NORMAL_FONT);
 
         gbc.gridx = 0;
         gbc.gridy = 0;
-        formPanel.add(titleLabel, gbc);
+        formPanel.add(plotLabel, gbc);
 
-        gbc.gridx = 0;
         gbc.gridy = 1;
-        gbc.weightx = 1.0;
-        formPanel.add(requestField, gbc);
+        formPanel.add(plotComboBox, gbc);
+
+        // Request Type Dropdown
+        JLabel typeLabel = new JLabel("Request Type:");
+        typeLabel.setFont(NORMAL_FONT);
+        JComboBox<String> typeComboBox = new JComboBox<>(new String[]{
+                "Add Plot to Portal", "Mutation"
+        });
+        typeComboBox.setFont(NORMAL_FONT);
+
+        gbc.gridy = 2;
+        formPanel.add(typeLabel, gbc);
+
+        gbc.gridy = 3;
+        formPanel.add(typeComboBox, gbc);
 
         // Description
         JLabel descLabel = new JLabel("Description:");
@@ -580,19 +732,15 @@ public class UserDashboard extends JFrame {
         descriptionField.setWrapStyleWord(true);
         JScrollPane scrollPane = new JScrollPane(descriptionField);
 
-        gbc.gridx = 0;
-        gbc.gridy = 2;
-        gbc.weightx = 0;
+        gbc.gridy = 4;
         formPanel.add(descLabel, gbc);
 
-        gbc.gridx = 0;
-        gbc.gridy = 3;
-        gbc.weightx = 1.0;
+        gbc.gridy = 5;
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.BOTH;
         formPanel.add(scrollPane, gbc);
 
-        // Buttons panel
+        // Button Panel
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         buttonPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         buttonPanel.setBackground(HEADER_BG);
@@ -605,41 +753,34 @@ public class UserDashboard extends JFrame {
         submitButton.setFont(BUTTON_FONT);
         submitButton.setBackground(PRIMARY_DARK);
         submitButton.setForeground(Color.WHITE);
+        Map<String, String> finalPlotMap = plotMap;
+
         submitButton.addActionListener(e -> {
-            String requestTitle = requestField.getText();
+            String selectedPlotNo = (String) plotComboBox.getSelectedItem();
+            String requestType = (String) typeComboBox.getSelectedItem();
             String description = descriptionField.getText();
 
-            if (requestTitle.isEmpty() || description.isEmpty()) {
-                JOptionPane.showMessageDialog(
-                        dialog,
-                        "Both fields are required to create an application.",
-                        "Missing Information",
-                        JOptionPane.WARNING_MESSAGE
-                );
-            } else {
-                FirebaseInitializer.createApplication(userUid, requestTitle, description);
-                dialog.dispose();
-                JOptionPane.showMessageDialog(
-                        this,
-                        "Your application has been submitted successfully!",
-                        "Application Created",
-                        JOptionPane.INFORMATION_MESSAGE
-                );
-
-                // Refresh after creating application
-                loadingLabel.setVisible(true);
-                fetchUserApplications(userUid);
+            if (selectedPlotNo == null || selectedPlotNo.equals("No plots available") || description.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "All fields are required.", "Missing Information", JOptionPane.WARNING_MESSAGE);
+                return;
             }
+
+            System.out.println(selectedPlotNo.split(" ")[0]);
+
+            // Now we directly use selectedPlotNo (plotNo) as the identifier
+            FirebaseInitializer.createApplication(userUid, selectedPlotNo.split(" ")[0], requestType, description);
+            dialog.dispose();
+            JOptionPane.showMessageDialog(this, "Application submitted successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+            loadingLabel.setVisible(true);
+            fetchUserApplications(userUid);
         });
 
         buttonPanel.add(cancelButton);
         buttonPanel.add(submitButton);
 
-        // Add all panels to dialog
         dialog.add(headerPanel, BorderLayout.NORTH);
         dialog.add(formPanel, BorderLayout.CENTER);
         dialog.add(buttonPanel, BorderLayout.SOUTH);
-
         dialog.setVisible(true);
     }
 

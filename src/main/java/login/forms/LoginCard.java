@@ -22,11 +22,15 @@ public class LoginCard extends JPanel {
     private JPanel formPanel;
     private JLabel loadingLabel;
 
-    // Declare txtFullName here, so it's available across the methods
     private JTextField txtFullName;
 
     public LoginCard() {
         init();
+        // Add this to force proper layout calculation
+        SwingUtilities.invokeLater(() -> {
+            revalidate();
+            repaint();
+        });
     }
 
     private void init() {
@@ -47,10 +51,8 @@ public class LoginCard extends JPanel {
 
         buildForm();
 
-        // Initial bounds
-        formPanel.setBounds(0, 0, 500, 600);
-        layeredPane.setBounds(0, 0, 500, 600);
-        updateLoadingPosition();
+        // Add this to properly set the initial size of form components
+        formPanel.setSize(formPanel.getPreferredSize());
 
         // Resize handling
         addComponentListener(new ComponentAdapter() {
@@ -61,10 +63,25 @@ public class LoginCard extends JPanel {
                 updateLoadingPosition();
             }
         });
+
+        // Add this to ensure components are properly sized when first shown
+        addHierarchyListener(new HierarchyListener() {
+            @Override
+            public void hierarchyChanged(HierarchyEvent e) {
+                if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                    SwingUtilities.invokeLater(() -> {
+                        layeredPane.setBounds(0, 0, getWidth(), getHeight());
+                        formPanel.setBounds(0, 0, getWidth(), getHeight());
+                        revalidate();
+                        repaint();
+                    });
+                }
+            }
+        });
     }
 
     private void buildForm() {
-        formPanel.removeAll();
+        formPanel.removeAll(); // Ensure the form is cleared before adding components
 
         JLabel title = new JLabel(isLogin ? "Login to your account" : "Register a new account", SwingConstants.CENTER);
         title.putClientProperty(FlatClientProperties.STYLE, "font:bold +10");
@@ -76,6 +93,8 @@ public class LoginCard extends JPanel {
                         "focusWidth:1;" +
                         "innerFocusWidth:0");
         txtEmail.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Enter your email");
+        // Set preferred size to ensure consistent size
+        txtEmail.setPreferredSize(new Dimension(250, 30));
         formPanel.add(new JLabel("Email"), "gapy 20");
         formPanel.add(txtEmail);
 
@@ -86,18 +105,20 @@ public class LoginCard extends JPanel {
                         "innerFocusWidth:0;" +
                         "showRevealButton:true");
         txtPassword.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Enter your password");
+        // Set preferred size to ensure consistent size
+        txtPassword.setPreferredSize(new Dimension(250, 30));
         formPanel.add(new JLabel("Password"), "gapy 10");
         formPanel.add(txtPassword);
 
-        // Register page: Add Full Name field
         if (!isLogin) {
-            // Initialize txtFullName when registering
             txtFullName = new JTextField();
             txtFullName.putClientProperty(FlatClientProperties.STYLE,
                     "margin:5,10,5,10;" +
                             "focusWidth:1;" +
                             "innerFocusWidth:0");
             txtFullName.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "Enter your full name");
+            // Set preferred size to ensure consistent size
+            txtFullName.setPreferredSize(new Dimension(250, 30));
             formPanel.add(new JLabel("Full Name"), "gapy 10");
             formPanel.add(txtFullName);
         }
@@ -128,6 +149,7 @@ public class LoginCard extends JPanel {
                         "focusWidth:0;" +
                         "innerFocusWidth:0");
         cmdSubmit.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        cmdSubmit.setPreferredSize(new Dimension(100, 35));
         formPanel.add(cmdSubmit, "gapy 30");
 
         cmdSubmit.addActionListener(e -> {
@@ -136,7 +158,6 @@ public class LoginCard extends JPanel {
             String selectedUserType = getSelectedUserType();
             String fullName;
 
-            // If it's Register mode, get the full name
             if (!isLogin) {
                 fullName = txtFullName.getText();
                 if (fullName == null || fullName.trim().isEmpty()) {
@@ -147,10 +168,8 @@ public class LoginCard extends JPanel {
                 fullName = null;
             }
 
-            // Show loading
             showLoadingIndicator();
 
-            // Execute in background
             new SwingWorker<Void, Void>() {
                 @Override
                 protected Void doInBackground() throws Exception {
@@ -212,11 +231,15 @@ public class LoginCard extends JPanel {
 
         formPanel.revalidate();
         formPanel.repaint();
+
+        // Revalidate and repaint the whole parent container to resolve layout issues
+        revalidate();
+        repaint();
     }
 
     private void showLoadingIndicator() {
         loadingLabel.setVisible(true);
-        loadingLabel.setSize(100, 100);  // Set size of loading gif
+        loadingLabel.setSize(100, 100);
         updateLoadingPosition();
         loadingLabel.repaint();
     }
@@ -234,6 +257,12 @@ public class LoginCard extends JPanel {
 
     private void updateView() {
         buildForm();
+
+        // Force the layout to update properly
+        SwingUtilities.invokeLater(() -> {
+            revalidate();
+            repaint();
+        });
     }
 
     public String getSelectedUserType() {

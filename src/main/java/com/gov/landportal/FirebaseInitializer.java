@@ -86,30 +86,22 @@ public class FirebaseInitializer {
     }
 
     // Create a new application for a user
-    public static void createApplication(String uid, String requestTitle, String description) {
-        try {
-            if (!initialized) {
-                init();  // Ensure initialization
-            }
+    public static void createApplication(String uid, String plotId, String requestType, String description) {
+        Firestore db = getDB();
+        DocumentReference docRef = db.collection("applications").document(); // auto ID
 
-            Firestore db = getDB();
-            DocumentReference applicationRef = db.collection("applications").document(); // New document
+        Map<String, Object> data = new HashMap<>();
+        data.put("uid", uid);
+        data.put("plotId", plotId);
+        data.put("requestType", requestType);
+        data.put("description", description);
+        data.put("status", "Pending");
+        data.put("timestamp", FieldValue.serverTimestamp());
+        data.put("title", requestType + " for Plot " + plotId); // ✅ Add title
 
-            Map<String, Object> applicationDetails = new HashMap<>();
-            applicationDetails.put("uid", uid);              // User ID (to associate with the user)
-            applicationDetails.put("title", requestTitle);   // Application title
-            applicationDetails.put("description", description); // Application description
-            applicationDetails.put("status", "Pending");      // Initial status set to "Pending"
-            applicationDetails.put("createdAt", FieldValue.serverTimestamp());  // Timestamp
-
-            // Save the application in Firestore
-            applicationRef.set(applicationDetails);
-
-            System.out.println("Application created successfully!");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        docRef.set(data);
     }
+
 
     public static UserRecord authenticateUser(String email, String password) {
         try {
@@ -248,6 +240,76 @@ public class FirebaseInitializer {
             // Handle failure
             System.err.println("Error updating status: " + e.getMessage());
         }
+    }
+
+    public static void createPlot(String uid, String plotNo, boolean isSellable, String address, String mapLink) {
+        try {
+            Firestore db = getDB();
+
+            Map<String, Object> plotData = new HashMap<>();
+            plotData.put("uid", uid);  // Owner/user ID
+            plotData.put("plotNo", plotNo);
+            plotData.put("isSellable", isSellable);
+            plotData.put("address", address);
+            plotData.put("mapLink", mapLink);
+            plotData.put("approved", false); // Initially set to false
+            plotData.put("createdAt", FieldValue.serverTimestamp());
+
+            // Add to 'plots' collection
+            db.collection("plots").add(plotData).get(); // Optional: block on write completion
+
+            System.out.println("Plot added successfully!");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static List<String> getUserPlots(String uid) {
+        List<String> plotDescriptions = new ArrayList<>();
+        Firestore db = getDB();
+
+        try {
+            ApiFuture<QuerySnapshot> future = db.collection("plots")
+                    .whereEqualTo("uid", uid)
+                    .get();
+
+            List<QueryDocumentSnapshot> documents = future.get().getDocuments();
+            for (QueryDocumentSnapshot doc : documents) {
+                String plotNo = doc.getString("plotNo");
+                String address = doc.getString("address");
+                plotDescriptions.add(plotNo + " | " + address);
+            }
+
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+        }
+
+        return plotDescriptions;
+    }
+
+    public static Map<String, String> getUserPlotsMap(String uid) {
+        Map<String, String> plotMap = new HashMap<>();
+        Firestore db = getDB();
+
+        try {
+            ApiFuture<QuerySnapshot> future = db.collection("plots")
+                    .whereEqualTo("uid", uid)
+                    .get();
+
+            List<QueryDocumentSnapshot> documents = future.get().getDocuments();
+            for (QueryDocumentSnapshot doc : documents) {
+                String plotNo = doc.getString("plotNo");
+                String address = doc.getString("address");
+                String description = plotNo + " | " + address;
+                String plotId = doc.getId(); // Firestore document ID
+                plotMap.put(description, plotId);
+            }
+
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+        }
+
+        return plotMap;
     }
 
 }
