@@ -10,6 +10,8 @@ import com.google.firebase.auth.UserRecord;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.UserRecord.CreateRequest;
 import com.google.firebase.cloud.FirestoreClient;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
 import login.officer.Application;
 
 import java.io.OutputStream;
@@ -17,6 +19,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 import java.io.FileInputStream;
+import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -102,6 +105,17 @@ public class FirebaseInitializer {
         docRef.set(data);
     }
 
+    public static String getWebApiKeyFromServiceAccount(String filePath) {
+        try {
+            JSONParser parser = new JSONParser();
+            JSONObject json = (JSONObject) parser.parse(new FileReader(filePath));
+            return (String) json.get("web_api_key");
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new IllegalStateException("Failed to read web API key from serviceAccountKey.json", e);
+        }
+    }
+
 
     public static UserRecord authenticateUser(String email, String password) {
         try {
@@ -119,7 +133,7 @@ public class FirebaseInitializer {
             // we'll need to use the Firebase Authentication REST API
 
             // Get the API key from your Firebase project settings
-            String firebaseWebApiKey = System.getenv("FIREBASE_WEB_API_KEY");
+            String firebaseWebApiKey = getWebApiKeyFromServiceAccount("serviceAccountKey.json");
             if (firebaseWebApiKey == null || firebaseWebApiKey.isEmpty()) {
                 throw new IllegalStateException("Firebase Web API Key not found in environment variables");
             }
